@@ -16,7 +16,8 @@ class PointSetHamiltonianSystem:
         self.q0, self.sigma, self.N = q0, sigma, N
 
     def dist2_mat(self,q):
-        A = torch.sum(q**2,1).repeat(q.size(0),1)
+        # A = torch.sum(q**2,1).repeat(q.size(0),1)
+	A = torch.sum(q**2,1).expand(q.size(0),q.size(0))
         B = torch.mm(q, q.t())
         return A+A.t()-2*B
 
