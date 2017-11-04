@@ -15,10 +15,22 @@ class PointSetHamiltonianSystem:
         # Store the parameters
         self.q0, self.sigma, self.N = q0, sigma, N
 
+        # Allocate the intermediate tensors
+        self.m, self.d = q0.size()
+        self.D = torch.zeros(self.m, self.m)
+        self.G = torch.zeros(self.m, self.m)
+        self.P = torch.zeros(self.m, self.m)
+
+        # Allocate the output tensors
+        self.qt = list()
+        self.pt = list()
+        for t in range(self.N):
+            self.qt.append(torch.zeros(self.m, self.d))
+            self.pt.append(torch.zeros(self.m, self.d))
+
     def dist2_mat(self,q):
-        # A = torch.sum(q**2,1).repeat(q.size(0),1)
-	A = torch.sum(q**2,1).expand(q.size(0),q.size(0))
         B = torch.mm(q, q.t())
+        A = torch.sum(q**2,1).expand_as(B)
         return A+A.t()-2*B
 
     def hamiltonian_jet(self, q, p):
@@ -29,48 +41,45 @@ class PointSetHamiltonianSystem:
             p:      M x 2 tensor of momenta
         """
 
-        # Number of points
-        m,d = q.size()
-
         # Gaussian factor
         f = -0.5 / self.sigma ** 2
 
         # Compute the distance matrix between elements of q
-        pi_pj = torch.mm(p, p.t())
+        A = torch.sum(q**2,1).expand_as(self.D)
+        torch.addmm(f, A+A.t(), -2 * f, q, q.t(), out=self.D)
+        self.D.exp_() 
+
+        # At this time, D holds the gaussian matrix
+        Hp = self.D.mm(p)
+
+        # Now multiply by pi_pj outer product
+        torch.mm(p, p.t(), out = self.P)
+        torch.mul(self.D, self.P, out = self.D)
 
         # Hamiltonian value
-        dm = self.dist2_mat(q)
-        G = torch.exp(f * dm)
-        pi_pj_gqq = pi_pj * G
-        H = 0.5 * pi_pj_gqq.sum()
-
-        # Hp
-        Hp = torch.mm(G, p)
+        H = 0.5 * self.D.sum()
 
         # Hq
-        Z=2 * f * pi_pj_gqq;
-        Hq = q * sum(Z,0).view(-1,1).repeat(1,d) - torch.mm(Z,q)
+        z = sum(self.D, 0).unsqueeze(1).expand_as(q)
+        Hq = 2 * f * (z * q - self.D.mm(q))
 
         return H, Hq, Hp
 
     def flow(self, p0):
 
         # Initialize the flow
-        self.qt = list()
-        self.pt = list()
-        
-        self.qt.append(self.q0)
-        self.pt.append(p0)
+        self.qt[0] = self.q0
+        self.pt[0] = p0
 
         # Compute the hamiltonian and its derivatives
         dt = 1.0 / (self.N - 1)
         for t in range(self.N):
             H,Hq,Hp = self.hamiltonian_jet(self.qt[-1], self.pt[-1])
-            self.qt.append(self.qt[-1] + dt * Hp)
-            self.pt.append(self.pt[-1] - dt * Hq)
+            self.qt[t] = self.qt[t-1] + dt * Hp
+            self.pt[t] = self.pt[t-1] - dt * Hq
 
         # Return final state
-        return (H, self.qt[-1], self.pt[-1])
+        return (self.qt[-1], self.pt[-1])
         
         
 
